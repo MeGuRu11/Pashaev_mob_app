@@ -68,9 +68,13 @@ export default function RestoreHorizonScreen() {
   const feedbackAnim = useRef(new Animated.Value(0)).current;
   const trialIndexRef = useRef(trialIndex);
   const trialsRef = useRef(trials);
+  const trialResolvedRef = useRef(false);
+  const moveCountRef = useRef(0);
   const advanceTrialRef = useRef<() => void>(() => {});
   const finishSessionRef = useRef<() => void>(() => {});
   const showFeedbackAnimationRef = useRef<(correct: boolean) => void>(() => {});
+  const feedbackSequenceRef = useRef<Animated.CompositeAnimation | null>(null);
+  const isLeavingRef = useRef(false);
 
   useEffect(() => {
     trialIndexRef.current = trialIndex;
@@ -79,6 +83,13 @@ export default function RestoreHorizonScreen() {
   useEffect(() => {
     trialsRef.current = trials;
   }, [trials]);
+  useEffect(() => () => {
+    isLeavingRef.current = true;
+    if (feedbackSequenceRef.current) {
+      feedbackSequenceRef.current.stop();
+      feedbackSequenceRef.current = null;
+    }
+  }, []);
 
   const gridCardPadding = 14;
   const gridGap = 3;
@@ -118,7 +129,12 @@ export default function RestoreHorizonScreen() {
   const movesRemaining = Math.max(0, config.maxMoves - moveCount);
 
   const handleTimeout = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (trialResolvedRef.current) return;
+    trialResolvedRef.current = true;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
 
     const trial: Trial = {
       index: trialIndexRef.current,
@@ -138,20 +154,26 @@ export default function RestoreHorizonScreen() {
 
   const handleAction = useCallback(
     (action: HorizonAction) => {
-      if (!isActive || showFeedback || movesRemaining <= 0) return;
+      if (!isActive || showFeedback || trialResolvedRef.current) return;
+      if (moveCountRef.current >= config.maxMoves) return;
+      moveCountRef.current += 1;
       setCurrentGrid((prev) => applyGridAction(prev, action));
-      setMoveCount((prev) => prev + 1);
+      setMoveCount(moveCountRef.current);
 
       if (Platform.OS !== 'web') {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     },
-    [isActive, showFeedback, movesRemaining]
+    [isActive, showFeedback, config.maxMoves]
   );
 
   const handleConfirm = useCallback(() => {
-    if (!isActive || showFeedback) return;
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (!isActive || showFeedback || trialResolvedRef.current) return;
+    trialResolvedRef.current = true;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
 
     const rt = Date.now() - trialStartRef.current;
     const isCorrect = areGridsEqual(currentGrid, targetGrid);
@@ -178,6 +200,7 @@ export default function RestoreHorizonScreen() {
 
   useEffect(() => {
     if (!isActive) return;
+    trialResolvedRef.current = false;
     setTimeRemaining(config.timeLimit);
     trialStartRef.current = Date.now();
 
@@ -193,16 +216,25 @@ export default function RestoreHorizonScreen() {
     }, 100);
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     };
   }, [trialIndex, isActive, config.timeLimit, handleTimeout]);
 
   const showFeedbackAnimation = useCallback((correct: boolean) => {
+    if (isLeavingRef.current) return;
     setFeedbackCorrect(correct);
     setShowFeedback(true);
     feedbackAnim.setValue(0);
 
-    Animated.sequence([
+    if (feedbackSequenceRef.current) {
+      feedbackSequenceRef.current.stop();
+      feedbackSequenceRef.current = null;
+    }
+
+    const feedbackSequence = Animated.sequence([
       Animated.timing(feedbackAnim, {
         toValue: 1,
         duration: 150,
@@ -214,7 +246,11 @@ export default function RestoreHorizonScreen() {
         duration: 150,
         useNativeDriver: true,
       }),
-    ]).start(() => {
+    ]);
+    feedbackSequenceRef.current = feedbackSequence;
+    feedbackSequence.start(({ finished }) => {
+      feedbackSequenceRef.current = null;
+      if (!finished || isLeavingRef.current) return;
       setShowFeedback(false);
       advanceTrialRef.current();
     });
@@ -232,13 +268,23 @@ export default function RestoreHorizonScreen() {
       setTrialIndex(nextTrial);
       setPatternSeed(generateSeed());
       setTransformSeed(generateSeed());
+      moveCountRef.current = 0;
       setMoveCount(0);
     }
   }, [config.trialsCount]);
 
   const finishSession = useCallback(() => {
+    isLeavingRef.current = true;
+    if (feedbackSequenceRef.current) {
+      feedbackSequenceRef.current.stop();
+      feedbackSequenceRef.current = null;
+    }
+    trialResolvedRef.current = true;
     setIsActive(false);
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
 
     const allTrials = [...trialsRef.current];
     const summary = buildSessionSummary(
@@ -287,7 +333,16 @@ export default function RestoreHorizonScreen() {
   }, [finishSession]);
 
   const handleQuit = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
+    isLeavingRef.current = true;
+    if (feedbackSequenceRef.current) {
+      feedbackSequenceRef.current.stop();
+      feedbackSequenceRef.current = null;
+    }
+    trialResolvedRef.current = true;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
     router.back();
   }, [router]);
 

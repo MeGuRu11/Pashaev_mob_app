@@ -108,6 +108,7 @@ eas build --platform android
 
 Ключи локального хранилища:
 
+- `surgicoach_state`
 - `surgicoach_sessions`
 - `surgicoach_progress`
 

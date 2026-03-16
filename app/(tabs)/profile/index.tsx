@@ -1,8 +1,6 @@
 import React, { useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useQueryClient } from '@tanstack/react-query';
 import {
   User,
   Shield,
@@ -20,14 +18,11 @@ import { formatAccuracy } from '@/utils/scoring';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
-  const { progress, totalSessionsCount, overallAccuracy } = useGame();
-  const queryClient = useQueryClient();
+  const { progress, totalSessionsCount, overallAccuracy, resetState } = useGame();
 
   const handleResetData = useCallback(() => {
     const doReset = async () => {
-      await AsyncStorage.multiRemove(['surgicoach_sessions', 'surgicoach_progress']);
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
-      queryClient.invalidateQueries({ queryKey: ['progress'] });
+      await resetState();
     };
 
     if (Platform.OS === 'web') {
@@ -44,7 +39,7 @@ export default function ProfileScreen() {
         ]
       );
     }
-  }, [queryClient]);
+  }, [resetState]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>

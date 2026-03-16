@@ -11,6 +11,30 @@ import {
 
 const SESSIONS_KEY = 'surgicoach_sessions';
 const PROGRESS_KEY = 'surgicoach_progress';
+const STATE_KEY = 'surgicoach_state';
+
+type PersistedGameState = {
+  sessions: SessionSummary[];
+  progress: Record<ModuleType, UserProgress>;
+};
+
+function parsePersistedState(raw: string | null): PersistedGameState | null {
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as { sessions?: unknown; progress?: unknown };
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.sessions)) {
+      return null;
+    }
+
+    return {
+      sessions: parsed.sessions as SessionSummary[],
+      progress: normalizeProgressRecord(parsed.progress),
+    };
+  } catch {
+    return null;
+  }
+}
 
 export const [GameProvider, useGame] = createContextHook(() => {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -18,6 +42,20 @@ export const [GameProvider, useGame] = createContextHook(() => {
   const sessionsRef = useRef<SessionSummary[]>([]);
   const progressRef = useRef<Record<ModuleType, UserProgress>>(DEFAULT_PROGRESS);
   const persistQueueRef = useRef(Promise.resolve());
+  const isHydratedRef = useRef(false);
+
+  const applyState = useCallback(
+    (
+      nextSessions: SessionSummary[],
+      nextProgress: Record<ModuleType, UserProgress>
+    ) => {
+      sessionsRef.current = nextSessions;
+      progressRef.current = nextProgress;
+      setSessions(nextSessions);
+      setProgress(nextProgress);
+    },
+    []
+  );
 
   const persistState = useCallback(
     (
@@ -26,8 +64,11 @@ export const [GameProvider, useGame] = createContextHook(() => {
     ) => {
       persistQueueRef.current = persistQueueRef.current
         .then(async () => {
-          await AsyncStorage.setItem(SESSIONS_KEY, JSON.stringify(nextSessions));
-          await AsyncStorage.setItem(PROGRESS_KEY, JSON.stringify(nextProgress));
+          const snapshot = JSON.stringify({
+            sessions: nextSessions,
+            progress: nextProgress,
+          });
+          await AsyncStorage.setItem(STATE_KEY, snapshot);
         })
         .catch((e) => {
           console.log('Failed to persist game state:', e);
@@ -40,8 +81,14 @@ export const [GameProvider, useGame] = createContextHook(() => {
     queryKey: ['sessions'],
     queryFn: async () => {
       try {
+        const snapshot = parsePersistedState(await AsyncStorage.getItem(STATE_KEY));
+        if (snapshot) {
+          return snapshot.sessions;
+        }
+
         const stored = await AsyncStorage.getItem(SESSIONS_KEY);
-        return stored ? (JSON.parse(stored) as SessionSummary[]) : [];
+        const parsed = stored ? JSON.parse(stored) : [];
+        return Array.isArray(parsed) ? (parsed as SessionSummary[]) : [];
       } catch (e) {
         console.log('Failed to load sessions:', e);
         return [];
@@ -53,6 +100,11 @@ export const [GameProvider, useGame] = createContextHook(() => {
     queryKey: ['progress'],
     queryFn: async () => {
       try {
+        const snapshot = parsePersistedState(await AsyncStorage.getItem(STATE_KEY));
+        if (snapshot) {
+          return snapshot.progress;
+        }
+
         const stored = await AsyncStorage.getItem(PROGRESS_KEY);
         return stored
           ? normalizeProgressRecord(JSON.parse(stored))
@@ -65,21 +117,25 @@ export const [GameProvider, useGame] = createContextHook(() => {
   });
 
   useEffect(() => {
-    if (sessionsQuery.data) {
-      setSessions(sessionsQuery.data);
-      sessionsRef.current = sessionsQuery.data;
-    }
-  }, [sessionsQuery.data]);
+    if (isHydratedRef.current) return;
+    if (!sessionsQuery.isSuccess || !progressQuery.isSuccess) return;
 
-  useEffect(() => {
-    if (progressQuery.data) {
-      setProgress(progressQuery.data);
-      progressRef.current = progressQuery.data;
-    }
-  }, [progressQuery.data]);
+    applyState(
+      sessionsQuery.data ?? [],
+      progressQuery.data ?? DEFAULT_PROGRESS
+    );
+    isHydratedRef.current = true;
+  }, [
+    sessionsQuery.isSuccess,
+    progressQuery.isSuccess,
+    sessionsQuery.data,
+    progressQuery.data,
+    applyState,
+  ]);
 
   const addSession = useCallback(
     (session: SessionSummary) => {
+      isHydratedRef.current = true;
       const nextSessions = [session, ...sessionsRef.current].slice(0, 50);
       const currentProgress = progressRef.current;
       const moduleProgress = currentProgress[session.moduleId];
@@ -105,17 +161,15 @@ export const [GameProvider, useGame] = createContextHook(() => {
 
       const nextProgress = { ...currentProgress, [session.moduleId]: updatedProgress };
 
-      sessionsRef.current = nextSessions;
-      progressRef.current = nextProgress;
-      setSessions(nextSessions);
-      setProgress(nextProgress);
+      applyState(nextSessions, nextProgress);
       persistState(nextSessions, nextProgress);
     },
-    [persistState]
+    [applyState, persistState]
   );
 
   const updateDifficulty = useCallback(
     (moduleId: ModuleType, newLevel: number) => {
+      isHydratedRef.current = true;
       const normalizedLevel = clampDifficulty(newLevel);
       const currentProgress = progressRef.current;
       const moduleProgress = currentProgress[moduleId];
@@ -132,11 +186,10 @@ export const [GameProvider, useGame] = createContextHook(() => {
           selectedDifficulty: nextSelectedDifficulty,
         },
       };
-      progressRef.current = nextProgress;
-      setProgress(nextProgress);
+      applyState(sessionsRef.current, nextProgress);
       persistState(sessionsRef.current, nextProgress);
     },
-    [persistState]
+    [applyState, persistState]
   );
 
   const updateDifficultySettings = useCallback(
@@ -144,6 +197,7 @@ export const [GameProvider, useGame] = createContextHook(() => {
       moduleId: ModuleType,
       settings: { difficultyMode: DifficultyMode; selectedDifficulty: number }
     ) => {
+      isHydratedRef.current = true;
       const selectedDifficulty = clampDifficulty(settings.selectedDifficulty);
       const currentProgress = progressRef.current;
       const moduleProgress = currentProgress[moduleId];
@@ -161,12 +215,26 @@ export const [GameProvider, useGame] = createContextHook(() => {
           currentDifficulty: nextCurrentDifficulty,
         },
       };
-      progressRef.current = nextProgress;
-      setProgress(nextProgress);
+      applyState(sessionsRef.current, nextProgress);
       persistState(sessionsRef.current, nextProgress);
     },
-    [persistState]
+    [applyState, persistState]
   );
+
+  const resetState = useCallback(async () => {
+    isHydratedRef.current = true;
+    applyState([], DEFAULT_PROGRESS);
+
+    persistQueueRef.current = persistQueueRef.current
+      .then(async () => {
+        await AsyncStorage.multiRemove([STATE_KEY, SESSIONS_KEY, PROGRESS_KEY]);
+      })
+      .catch((e) => {
+        console.log('Failed to reset game state:', e);
+      });
+
+    await persistQueueRef.current;
+  }, [applyState]);
 
   const getModuleSessions = useCallback(
     (moduleId: ModuleType) => sessions.filter((s) => s.moduleId === moduleId),
@@ -180,7 +248,7 @@ export const [GameProvider, useGame] = createContextHook(() => {
     return sessions.reduce((sum, s) => sum + s.accuracy, 0) / sessions.length;
   }, [sessions]);
 
-  const isLoading = sessionsQuery.isLoading || progressQuery.isLoading;
+  const isLoading = !isHydratedRef.current && (sessionsQuery.isLoading || progressQuery.isLoading);
 
   return {
     sessions,
@@ -189,6 +257,7 @@ export const [GameProvider, useGame] = createContextHook(() => {
     addSession,
     updateDifficulty,
     updateDifficultySettings,
+    resetState,
     getModuleSessions,
     totalSessionsCount,
     overallAccuracy,

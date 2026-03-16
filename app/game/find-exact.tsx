@@ -89,11 +89,21 @@ export default function FindExactScreen() {
   const trialIndexRef = useRef(trialIndex);
   const trialsRef = useRef(trials);
   const streakRef = useRef(streak);
+  const trialResolvedRef = useRef(false);
   const showFeedbackAnimationRef = useRef<(correct: boolean) => void>(() => {});
+  const feedbackSequenceRef = useRef<Animated.CompositeAnimation | null>(null);
+  const isLeavingRef = useRef(false);
 
   useEffect(() => { trialIndexRef.current = trialIndex; }, [trialIndex]);
   useEffect(() => { trialsRef.current = trials; }, [trials]);
   useEffect(() => { streakRef.current = streak; }, [streak]);
+  useEffect(() => () => {
+    isLeavingRef.current = true;
+    if (feedbackSequenceRef.current) {
+      feedbackSequenceRef.current.stop();
+      feedbackSequenceRef.current = null;
+    }
+  }, []);
 
   const padding = 20;
   const gridGap = 10;
@@ -134,7 +144,13 @@ export default function FindExactScreen() {
   );
 
   const handleTimeout = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (trialResolvedRef.current) return;
+    trialResolvedRef.current = true;
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
 
     const trial: Trial = {
       index: trialIndexRef.current,
@@ -153,8 +169,12 @@ export default function FindExactScreen() {
   }, [config.timeLimit]);
 
   const handleOptionPress = useCallback((index: number) => {
-    if (!isActive || showFeedback) return;
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (!isActive || showFeedback || trialResolvedRef.current) return;
+    trialResolvedRef.current = true;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
 
     const rt = Date.now() - trialStartRef.current;
     const isCorrect = index === trialData.correctIndex;
@@ -182,6 +202,7 @@ export default function FindExactScreen() {
 
   useEffect(() => {
     if (!isActive) return;
+    trialResolvedRef.current = false;
     setTimeRemaining(config.timeLimit);
     trialStartRef.current = Date.now();
 
@@ -197,7 +218,10 @@ export default function FindExactScreen() {
     }, 100);
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     };
   }, [trialIndex, isActive, config.timeLimit, handleTimeout]);
 
@@ -205,11 +229,17 @@ export default function FindExactScreen() {
   const finishSessionRef = useRef<() => void>(() => {});
 
   const showFeedbackAnimation = useCallback((correct: boolean) => {
+    if (isLeavingRef.current) return;
     setFeedbackCorrect(correct);
     setShowFeedback(true);
     feedbackAnim.setValue(0);
 
-    Animated.sequence([
+    if (feedbackSequenceRef.current) {
+      feedbackSequenceRef.current.stop();
+      feedbackSequenceRef.current = null;
+    }
+
+    const feedbackSequence = Animated.sequence([
       Animated.timing(feedbackAnim, {
         toValue: 1,
         duration: 150,
@@ -221,7 +251,11 @@ export default function FindExactScreen() {
         duration: 150,
         useNativeDriver: true,
       }),
-    ]).start(() => {
+    ]);
+    feedbackSequenceRef.current = feedbackSequence;
+    feedbackSequence.start(({ finished }) => {
+      feedbackSequenceRef.current = null;
+      if (!finished || isLeavingRef.current) return;
       setShowFeedback(false);
       setSelectedIndex(null);
       advanceTrialRef.current();
@@ -245,8 +279,17 @@ export default function FindExactScreen() {
   useEffect(() => { advanceTrialRef.current = advanceTrial; }, [advanceTrial]);
 
   const finishSession = useCallback(() => {
+    isLeavingRef.current = true;
+    if (feedbackSequenceRef.current) {
+      feedbackSequenceRef.current.stop();
+      feedbackSequenceRef.current = null;
+    }
+    trialResolvedRef.current = true;
     setIsActive(false);
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
 
     const allTrials = [...trialsRef.current];
     const summary = buildSessionSummary(
@@ -289,7 +332,16 @@ export default function FindExactScreen() {
   useEffect(() => { finishSessionRef.current = finishSession; }, [finishSession]);
 
   const handleQuit = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
+    isLeavingRef.current = true;
+    if (feedbackSequenceRef.current) {
+      feedbackSequenceRef.current.stop();
+      feedbackSequenceRef.current = null;
+    }
+    trialResolvedRef.current = true;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
     router.back();
   }, [router]);
 

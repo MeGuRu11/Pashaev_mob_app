@@ -8,7 +8,7 @@
     "start-web": "expo start --web --tunnel",
     "start-web-dev": "expo start --web --tunnel --clear",
     "lint": "expo lint",
-    "test": "tsx --test tests/scoring.test.ts tests/adaptive-difficulty.test.ts tests/shape-generator.test.ts tests/horizon-generator.test.ts tests/progress-normalization.test.ts"
+    "test": "tsx --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

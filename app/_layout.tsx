@@ -5,7 +5,9 @@ import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { GameProvider } from "@/providers/GameProvider";
 
-SplashScreen.preventAutoHideAsync();
+SplashScreen.preventAutoHideAsync().catch(() => {
+  // Splash may already be controlled by Expo in some environments.
+});
 
 const queryClient = new QueryClient();
 
@@ -30,7 +32,9 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   useEffect(() => {
-    SplashScreen.hideAsync();
+    SplashScreen.hideAsync().catch(() => {
+      // Ignore hide errors during fast refresh or duplicate calls.
+    });
   }, []);
 
   return (

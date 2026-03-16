@@ -55,6 +55,7 @@ export default function ResultsScreen() {
   const showAdaptiveDifficulty = mode === 'adaptive';
   const promoted = newDifficulty > difficulty;
   const demoted = newDifficulty < difficulty;
+  const replayDifficulty = mode === 'adaptive' ? newDifficulty : difficulty;
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
@@ -207,7 +208,7 @@ export default function ResultsScreen() {
                   pathname: (moduleId === 'find-exact' ? '/game/find-exact' : '/game/restore-horizon') as any,
                   params: {
                     mode,
-                    level: String(difficulty),
+                    level: String(replayDifficulty),
                   },
                 });
               }}
